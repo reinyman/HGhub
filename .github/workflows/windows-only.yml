@@ -1,0 +1,56 @@
+name: Windows Only
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CI: "true"
+
+jobs:
+  windows:
+    name: Windows x64 (setup + portable)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build NSIS installer
+        run: pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis
+
+      - name: Collect installer and portable ZIP
+        shell: pwsh
+        run: |
+          $version = (Get-Content -Raw src-tauri/tauri.conf.json | ConvertFrom-Json).version
+          $releaseDir = 'src-tauri/target/x86_64-pc-windows-msvc/release'
+          $installer = Get-Item -LiteralPath "$releaseDir/bundle/nsis/HGhub_${version}_x64-setup.exe"
+          $binary = Get-Item -LiteralPath "$releaseDir/huangguo-client.exe"
+          New-Item -ItemType Directory -Path artifacts, portable | Out-Null
+          Copy-Item -LiteralPath $installer.FullName -Destination artifacts
+          Copy-Item -LiteralPath $binary.FullName -Destination portable/HGhub.exe
+          Compress-Archive -LiteralPath portable/HGhub.exe -DestinationPath "artifacts/HGhub_${version}_x64_portable.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: artifacts/*
+          if-no-files-found: error
